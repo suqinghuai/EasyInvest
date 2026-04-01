@@ -1,0 +1,5 @@
+[API]
+# OpenAI兼容的大模型接口配置
+api_key = YOUR_API_KEY_HERE
+api_base = YOUR_API_BASE_URL
+model = model_name_here
