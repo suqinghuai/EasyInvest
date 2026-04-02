@@ -99,48 +99,56 @@ class StockAnalyzer:
         data_str = content[data_start:data_end]
         data_parts = data_str.split('~')
         
-        # 根据实际API响应格式重新设计解析逻辑
-        # 从日志可以看到实际字段顺序：
-        # [0]: 未知标识, [1]: 股票名称, [2]: 股票代码, [3]: 当前价格, [4]: 昨收价, [5]: 今开价
-        # [6]: 成交量(手), [31]: 涨跌额, [32]: 涨跌幅, [33]: 最高价, [34]: 最低价
+        # 根据腾讯财经API字段说明进行解析（字段序号从1开始，Python索引从0开始）
+        # 字段1: 交易所ID (0), 字段2: 合约名称 (1), 字段3: 合约ID (2)
+        # 字段4: 最新价 (3), 字段5: 昨收 (4), 字段6: 开盘价 (5), 字段7: 成交量手 (6)
+        # 字段31: 时间 (30), 字段32: 涨跌 (31), 字段33: 涨跌幅 (32)
+        # 字段34: 最高价 (33), 字段35: 最低价 (34)
+        # 字段36: 组合字段 最新价/成交量/成交额元 (35)
+        # 字段37: 成交量手 (36), 字段38: 成交额万 (37)
+        # 字段39: 换手 (38), 字段40: 市盈率 (39)
+        # 字段44: 振幅 (43), 字段45: 流通市值 (44), 字段46: 总市值 (45)
         
         if len(data_parts) >= 35:
-            # 正确的字段映射（基于实际API响应）
             parsed_data['stock_name'] = data_parts[1] if data_parts[1] else '未知'
             parsed_data['stock_code_api'] = data_parts[2] if data_parts[2] else stock_code
-            parsed_data['current_price'] = self._safe_float(data_parts[3])  # 当前价格
-            parsed_data['last_close'] = self._safe_float(data_parts[4])      # 昨收价
-            parsed_data['open_price'] = self._safe_float(data_parts[5])      # 开盘价
-            parsed_data['volume'] = self._safe_float(data_parts[6])          # 成交量(手)
+            parsed_data['current_price'] = self._safe_float(data_parts[3])
+            parsed_data['last_close'] = self._safe_float(data_parts[4])
+            parsed_data['open_price'] = self._safe_float(data_parts[5])
+            parsed_data['volume'] = self._safe_float(data_parts[6])
             
-            # 成交额可能在多个位置，尝试不同的索引
-            # 根据API响应分析：data_parts[7]可能是成交额（万元）
-            parsed_data['turnover'] = self._safe_float(data_parts[7])        # 成交额(万元)
+            # 从字段36（索引35）的组合字段中提取成交额
+            # 组合字段格式：最新价/成交量/成交额（元）
+            if len(data_parts) > 35 and data_parts[35]:
+                combo_parts = data_parts[35].split('/')
+                if len(combo_parts) >= 3:
+                    parsed_data['turnover'] = self._safe_float(combo_parts[2]) / 10000  # 转换为万元
+                else:
+                    parsed_data['turnover'] = self._safe_float(data_parts[37]) if len(data_parts) > 37 else 0.0
+            else:
+                parsed_data['turnover'] = self._safe_float(data_parts[37]) if len(data_parts) > 37 else 0.0
             
-            parsed_data['change'] = self._safe_float(data_parts[31])         # 涨跌额
-            parsed_data['change_percent'] = self._safe_float(data_parts[32].rstrip('%')) if data_parts[32] else 0.0  # 涨跌幅
-            parsed_data['high_price'] = self._safe_float(data_parts[33])     # 最高价
-            parsed_data['low_price'] = self._safe_float(data_parts[34])      # 最低价
+            parsed_data['change'] = self._safe_float(data_parts[31])
+            parsed_data['change_percent'] = self._safe_float(data_parts[32])
+            parsed_data['high_price'] = self._safe_float(data_parts[33])
+            parsed_data['low_price'] = self._safe_float(data_parts[34])
             
-            # 尝试获取其他重要字段
-            if len(data_parts) > 37:
-                parsed_data['turnover_rate'] = self._safe_float(data_parts[37].rstrip('%')) if data_parts[37] else 0.0  # 换手率
             if len(data_parts) > 38:
-                parsed_data['pe_ratio'] = self._safe_float(data_parts[38])  # 市盈率
+                parsed_data['turnover_rate'] = self._safe_float(data_parts[38])
             if len(data_parts) > 39:
-                parsed_data['amplitude'] = self._safe_float(data_parts[39].rstrip('%')) if data_parts[39] else 0.0  # 振幅
+                parsed_data['pe_ratio'] = self._safe_float(data_parts[39])
+            if len(data_parts) > 43:
+                parsed_data['amplitude'] = self._safe_float(data_parts[43])
             if len(data_parts) > 44:
-                parsed_data['circulation_market_cap'] = self._safe_float(data_parts[44])  # 流通市值
+                parsed_data['circulation_market_cap'] = self._safe_float(data_parts[44])
             if len(data_parts) > 45:
-                parsed_data['total_market_cap'] = self._safe_float(data_parts[45])  # 总市值
+                parsed_data['total_market_cap'] = self._safe_float(data_parts[45])
         else:
-            # 如果字段较少，尝试基本解析
             if len(data_parts) >= 7:
                 parsed_data['stock_name'] = data_parts[1] if data_parts[1] else '未知'
                 parsed_data['current_price'] = self._safe_float(data_parts[3])
                 parsed_data['last_close'] = self._safe_float(data_parts[4])
         
-        # 验证数据合理性
         self._validate_stock_data(parsed_data)
         
         parsed_data['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -210,7 +218,12 @@ class StockAnalyzer:
     
     def _build_analysis_prompt(self, stock_data: Dict) -> str:
         """构建专业分析提示词"""
+        current_time = datetime.now().strftime('%Y年%m月%d日 %H:%M')
         prompt = f"""作为专业股票分析师，请基于以下实时数据为{stock_data.get('stock_name', 'N/A')}({stock_data.get('stock_code', 'N/A')})提供专业的投资分析报告。
+
+【重要提示】
+- 当前日期时间：{current_time}
+- 请务必基于当前日期进行分析，不要误判为2024年或其他年份
 
 【核心数据】
 - 当前价格：{stock_data.get('current_price', 'N/A')}元
